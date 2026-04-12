@@ -22,7 +22,7 @@ final class PushService
             throw new \RuntimeException('Falta configurar TRADUCCIONES_URL.');
         }
 
-        $url = $baseUrl . '/api/v1/push';
+        $url = $baseUrl . '/api/v1/sync';
         $data = $this->scanner->extract();
 
         $response = $this->httpClient->request('POST', $url, [
