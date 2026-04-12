@@ -107,3 +107,4 @@ Tu archivo Markdown (MD) está listo
 [file-tag: implementacion_externa_md]
 
 Este documento resume todos los "puentes" que construimos: desde el registro del bundle hasta la configuración crítica del pool de caché y el namespace de Twig. Con esto, cualquier proyecto nuevo que herede estas configuraciones estará listo para sincronizarse con el Cerebro de inmediato.
+test
