@@ -1,0 +1,20 @@
+{# src/Resources/views/docs/index.html.twig #}
+{% extends 'base.html.twig' %}
+
+{% block title %}API Documentation{% endblock %}
+
+{% block body %}
+<div class="container mt-4">
+    <div class="card shadow-sm">
+        <div class="card-header bg-primary text-white">
+            <h5 class="mb-0">Documentación Técnica del Client Kit</h5>
+        </div>
+        <div class="card-body">
+            <div class="bg-light p-4 rounded border font-monospace">
+                {# Aquí se renderiza el contenido del api.md #}
+                {{ markdown_content|raw|nl2br }}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
