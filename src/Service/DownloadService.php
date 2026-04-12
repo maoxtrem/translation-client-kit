@@ -16,8 +16,7 @@ final class DownloadService
         private readonly EntityManagerInterface $entityManager,
         private readonly CacheItemPoolInterface $cacheTranslations,
         private readonly string $projectDir,
-    ) {
-    }
+    ) {}
 
     /**
      * @return array{count: int, source: string}
@@ -80,9 +79,10 @@ final class DownloadService
         }
 
         $this->cacheTranslations->clear();
-
+        $dbName = $this->entityManager->getConnection()->getDatabase();
         return [
             'count' => $inserted,
+            'message' => "Guardado en la base de datos: " . $dbName,
             'source' => $url,
         ];
     }
