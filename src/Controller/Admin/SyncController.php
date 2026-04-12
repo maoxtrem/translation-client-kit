@@ -10,6 +10,7 @@ use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\Routing\Attribute\Route;
+use Symfony\Contracts\HttpClient\Exception\HttpExceptionInterface;
 
 #[Route('/admin/translations')]
 final class SyncController extends AbstractController
@@ -41,31 +42,38 @@ final class SyncController extends AbstractController
         }
     }
 
+
+
     #[Route('/push', name: 'kit_sync_push', methods: ['POST'])]
     public function push(PushService $pushService): JsonResponse
     {
         try {
             $result = $pushService->push();
 
-            $llavesList = implode(', ', $result['keys'] ?? []);
-            $nuevas = (int) (($result['remote']['nuevas'] ?? 0));
-            $promovidas = (int) (($result['remote']['promovidas'] ?? 0));
-
+            // ... tu lógica de éxito actual ...
             return new JsonResponse([
                 'success' => true,
-                'status' => (int) ($result['status'] ?? 200),
-                'message' => sprintf(
-                    'Se enviaron %d llaves. Cerebro registro nuevas=%d, promovidas=%d. Llaves: [%s]',
-                    (int) ($result['count'] ?? 0),
-                    $nuevas,
-                    $promovidas,
-                    $llavesList
-                ),
+                'message' => 'Éxito...',
             ]);
-        } catch (\Throwable $exception) {
+        } catch (HttpExceptionInterface $exception) {
+            // ERROR DE RED: Capturamos lo que el Cerebro respondió antes de morir
+            $response = $exception->getResponse();
+            $remoteError = $response->toArray(false); // false para que no lance otra excepción
+
             return new JsonResponse([
                 'success' => false,
-                'error' => $exception->getMessage(),
+                'error' => 'Error en el Cerebro: ' . ($remoteError['mensaje'] ?? $remoteError['error'] ?? $exception->getMessage()),
+                'debug' => $remoteError, // Esto te mostrará el JSON completo que enviamos desde el Cerebro
+                'type' => 'remote_error'
+            ], Response::HTTP_INTERNAL_SERVER_ERROR);
+        } catch (\Throwable $exception) {
+            // ERROR LOCAL: Algo falló en el código del bundle o VPS antes de salir
+            return new JsonResponse([
+                'success' => false,
+                'error' => 'Error Local: ' . $exception->getMessage(),
+                'file' => $exception->getFile(),
+                'line' => $exception->getLine(),
+                'type' => 'local_error'
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
     }
