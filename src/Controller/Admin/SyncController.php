@@ -29,6 +29,9 @@ final class SyncController extends AbstractController
             return new JsonResponse([
                 'success' => true,
                 'message' => sprintf('Descargadas %d etiquetas.', (int) ($result['count'] ?? 0)),
+                'keys' => array_values($result['keys'] ?? []),
+                'dump_files' => array_values($result['dump_files'] ?? []),
+                'locales' => array_values($result['locales'] ?? []),
             ]);
         } catch (\Throwable $exception) {
             return new JsonResponse([

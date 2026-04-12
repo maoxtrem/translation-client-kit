@@ -55,6 +55,12 @@ async function handleAction(type) {
 
         if (data.success) {
             log.innerHTML += `<div class="text-success"> OK: ${data.message}</div>`;
+            if (Array.isArray(data.keys) && data.keys.length > 0) {
+                log.innerHTML += `<div class="text-info"> KEYS DESCARGADAS (${data.keys.length}): ${data.keys.join(', ')}</div>`;
+            }
+            if (Array.isArray(data.dump_files) && data.dump_files.length > 0) {
+                log.innerHTML += `<div class="text-primary"> ARCHIVOS DB: ${data.dump_files.join(', ')}</div>`;
+            }
             label.className = 'badge bg-success';
             label.innerText = 'Exito';
         } else {

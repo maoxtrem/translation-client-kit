@@ -11,6 +11,8 @@ use Symfony\Contracts\HttpClient\HttpClientInterface;
 
 final class DownloadService
 {
+    private const DB_MARKER_DOMAINS = ['messages', 'validators'];
+
     public function __construct(
         private readonly HttpClientInterface $httpClient,
         private readonly EntityManagerInterface $entityManager,
@@ -19,7 +21,14 @@ final class DownloadService
     ) {}
 
     /**
-     * @return array{count: int, source: string}
+     * @return array{
+     *   count: int,
+     *   message: string,
+     *   source: string,
+     *   keys: array<int, string>,
+     *   locales: array<int, string>,
+     *   dump_files: array<int, string>
+     * }
      */
     public function download(): array
     {
@@ -47,6 +56,10 @@ final class DownloadService
                 ->execute();
 
             $inserted = 0;
+            /** @var array<string, bool> $keys */
+            $keys = [];
+            /** @var array<string, bool> $locales */
+            $locales = [];
             foreach ($payload as $index => $row) {
                 if (!is_array($row)) {
                     throw new \RuntimeException(sprintf('Fila invalida en payload (indice %d).', $index));
@@ -67,6 +80,8 @@ final class DownloadService
 
                 $this->entityManager->persist($entity);
                 ++$inserted;
+                $keys[strtolower($keyName)] = true;
+                $locales[strtolower($locale)] = true;
             }
 
             $this->entityManager->flush();
@@ -78,12 +93,57 @@ final class DownloadService
             throw $exception;
         }
 
+        $keyList = array_keys($keys ?? []);
+        sort($keyList);
+        $localeList = array_keys($locales ?? []);
+        sort($localeList);
+
+        $dumpFiles = $this->writeDbMarkerFiles($localeList);
         $this->cacheTranslations->clear();
         $dbName = $this->entityManager->getConnection()->getDatabase();
+
         return [
             'count' => $inserted,
-            'message' => "Guardado en la base de datos: " . $dbName,
+            'message' => 'Guardado en la base de datos: ' . $dbName,
             'source' => $url,
+            'keys' => $keyList,
+            'locales' => $localeList,
+            'dump_files' => $dumpFiles,
         ];
+    }
+
+    /**
+     * @param array<int, string> $locales
+     *
+     * @return array<int, string>
+     */
+    private function writeDbMarkerFiles(array $locales): array
+    {
+        $targetDir = $this->projectDir . '/translations/db';
+        if (!is_dir($targetDir) && !mkdir($targetDir, 0775, true) && !is_dir($targetDir)) {
+            throw new \RuntimeException(sprintf('No se pudo crear el directorio de dump: %s', $targetDir));
+        }
+
+        $written = [];
+        foreach ($locales as $locale) {
+            $normalizedLocale = strtolower(trim($locale));
+            if ($normalizedLocale === '') {
+                continue;
+            }
+
+            foreach (self::DB_MARKER_DOMAINS as $domain) {
+                $filePath = $targetDir . '/' . $domain . '.' . $normalizedLocale . '.db';
+                $content = "# TranslationClientKit DB marker\n# domain: {$domain}\n# locale: {$normalizedLocale}\n";
+                if (file_put_contents($filePath, $content) === false) {
+                    throw new \RuntimeException(sprintf('No se pudo escribir el archivo: %s', $filePath));
+                }
+
+                $written[] = $filePath;
+            }
+        }
+
+        sort($written);
+
+        return $written;
     }
 }
