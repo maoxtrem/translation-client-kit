@@ -44,9 +44,16 @@ final class SyncController extends AbstractController
         try {
             $result = $pushService->push();
 
+            // Convertimos el array de llaves en una cadena separada por comas
+            $llavesList = implode(', ', $result['keys'] ?? []);
+
             return new JsonResponse([
                 'success' => true,
-                'message' => sprintf('Se enviaron %d llaves al Cerebro.', (int) ($result['count'] ?? 0)),
+                'message' => sprintf(
+                    'Se enviaron %d llaves: [%s]',
+                    (int) ($result['count'] ?? 0),
+                    $llavesList
+                ),
             ]);
         } catch (\Throwable $exception) {
             return new JsonResponse([
