@@ -1,0 +1,24 @@
+services:
+  _defaults:
+    autowire: true
+    autoconfigure: true
+
+  Maoxtrem\TranslationClientKit\:
+    resource: '../src/'
+
+  Maoxtrem\TranslationClientKit\Controller\:
+    resource: '../src/Controller/'
+    tags: ['controller.service_arguments']
+
+  Maoxtrem\TranslationClientKit\Service\TranslationScanner:
+    arguments:
+      $projectDir: '%kernel.project_dir%'
+
+  Maoxtrem\TranslationClientKit\Service\DownloadService:
+    arguments:
+      $cacheTranslations: '@cache.translations'
+      $projectDir: '%kernel.project_dir%'
+
+  Maoxtrem\TranslationClientKit\Service\DatabaseLoader:
+    tags:
+      - { name: 'translation.loader', alias: 'db' }

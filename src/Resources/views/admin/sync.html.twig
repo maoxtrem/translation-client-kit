@@ -1,0 +1,66 @@
+{% extends 'base.html.twig' %}
+
+{% block title %}Sync Traducciones{% endblock %}
+
+{% block body %}
+<div class="container mt-4">
+    <div class="card shadow border-0">
+        <div class="card-header bg-dark text-white d-flex justify-content-between">
+            <h5 class="mb-0">Client Kit: {{ app_name|default('Proyecto') }}</h5>
+            <span id="status-label" class="badge bg-secondary">Listo</span>
+        </div>
+        <div class="card-body">
+            <div class="row text-center">
+                <div class="col-md-6 border-end">
+                    <h4>PULL</h4>
+                    <p class="text-muted small">Traer traducciones desde el Cerebro a la BD local.</p>
+                    <button onclick="handleAction('pull')" id="btn-pull" class="btn btn-primary w-75">Sincronizar hacia abajo</button>
+                </div>
+                <div class="col-md-6">
+                    <h4>PUSH</h4>
+                    <p class="text-muted small">Escanear codigo y subir llaves nuevas al Cerebro.</p>
+                    <button onclick="handleAction('push')" id="btn-push" class="btn btn-success w-75">Subir llaves nuevas</button>
+                </div>
+            </div>
+            <div class="mt-4">
+                <div id="console-log" class="bg-light p-3 border rounded font-monospace small" style="height: 150px; overflow-y: auto;">
+                    &gt; Esperando accion...
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+async function handleAction(type) {
+    const btn = document.getElementById(`btn-${type}`);
+    const log = document.getElementById('console-log');
+    const label = document.getElementById('status-label');
+
+    btn.disabled = true;
+    label.className = 'badge bg-warning';
+    label.innerText = 'Procesando...';
+    log.innerHTML += `<div class="text-muted"> [${type.toUpperCase()}] Iniciando...</div>`;
+
+    try {
+        const response = await fetch(`/admin/translations/${type}`, { method: 'POST' });
+        const data = await response.json();
+
+        if (data.success) {
+            log.innerHTML += `<div class="text-success"> OK: ${data.message}</div>`;
+            label.className = 'badge bg-success';
+            label.innerText = 'Exito';
+        } else {
+            throw new Error(data.error);
+        }
+    } catch (e) {
+        log.innerHTML += `<div class="text-danger"> ERROR: ${e.message}</div>`;
+        label.className = 'badge bg-danger';
+        label.innerText = 'Error';
+    } finally {
+        btn.disabled = false;
+        log.scrollTop = log.scrollHeight;
+    }
+}
+</script>
+{% endblock %}

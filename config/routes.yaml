@@ -1,0 +1,11 @@
+kit_sync_routes:
+  resource: '../src/Controller/Admin/SyncController.php'
+  type: attribute
+
+kit_docs_routes:
+  resource: '../src/Controller/EndpointsDocsController.php'
+  type: attribute
+
+kit_api_locales:
+  resource: '../src/Controller/Api/BundleLocaleController.php'
+  type: attribute
