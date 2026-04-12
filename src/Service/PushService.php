@@ -36,7 +36,7 @@ final class PushService
         return [
             'status' => $response->getStatusCode(),
             'count' => count($data['keys']),
-            'debug_keys' => $data['keys'], // <--- Añade esto para ver la lista en el JSON
+            'keys' => $data['keys'], // <--- Cambia 'debug_keys' por 'keys'
             'message' => 'Sincronizacion enviada con exito.',
         ];
     }
