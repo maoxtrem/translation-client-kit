@@ -27,17 +27,50 @@ final class PushService
 
         $response = $this->httpClient->request('POST', $url, [
             'json' => [
+                // Backward compatible field names for servers that still parse project_code.
+                'service' => $serviceName,
                 'project_code' => $serviceName,
                 'keys' => $data['keys'],
             ],
         ]);
 
-        // src/Service/PushService.php - línea 40 aprox.
+        $status = $response->getStatusCode();
+        $content = $response->getContent(false);
+        $payload = $this->decodeJsonObject($content);
+
+        if ($status < 200 || $status >= 300) {
+            $error = (string) ($payload['error'] ?? $payload['message'] ?? '');
+            if ($error === '') {
+                $error = sprintf('Error remoto HTTP %d al sincronizar.', $status);
+            }
+
+            throw new \RuntimeException($error);
+        }
+
         return [
-            'status' => $response->getStatusCode(),
+            'status' => $status,
             'count' => count($data['keys']),
-            'keys' => $data['keys'], // <--- Cambia 'debug_keys' por 'keys'
+            'keys' => $data['keys'],
+            'remote' => $payload,
             'message' => 'Sincronizacion enviada con exito.',
         ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function decodeJsonObject(string $content): array
+    {
+        if ($content === '') {
+            return [];
+        }
+
+        try {
+            $decoded = json_decode($content, true, 512, JSON_THROW_ON_ERROR);
+        } catch (\JsonException) {
+            return [];
+        }
+
+        return is_array($decoded) ? $decoded : [];
     }
 }
