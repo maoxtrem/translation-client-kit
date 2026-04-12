@@ -56,24 +56,24 @@ final class SyncController extends AbstractController
                 'message' => 'Éxito...',
             ]);
         } catch (HttpExceptionInterface $exception) {
-            // ERROR DE RED: Capturamos lo que el Cerebro respondió antes de morir
+            // ¡ESTA ES LA CLAVE! 
+            // Obtenemos la respuesta que envió el servidor antes de morir
             $response = $exception->getResponse();
-            $remoteError = $response->toArray(false); // false para que no lance otra excepción
+
+            // Convertimos el JSON del error en un array (usamos false para que no lance otra excepción)
+            $errorData = $response->toArray(false);
 
             return new JsonResponse([
                 'success' => false,
-                'error' => 'Error en el Cerebro: ' . ($remoteError['mensaje'] ?? $remoteError['error'] ?? $exception->getMessage()),
-                'debug' => $remoteError, // Esto te mostrará el JSON completo que enviamos desde el Cerebro
-                'type' => 'remote_error'
+                'status' => $response->getStatusCode(),
+                'error' => 'Error en el Cerebro: ' . ($errorData['mensaje_real'] ?? $errorData['error'] ?? 'Error desconocido'),
+                'detalle' => $errorData, // Aquí verás todo el JSON chismoso que enviamos
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         } catch (\Throwable $exception) {
-            // ERROR LOCAL: Algo falló en el código del bundle o VPS antes de salir
+            // Errores locales del VPS (archivo no encontrado, problema de memoria, etc.)
             return new JsonResponse([
                 'success' => false,
-                'error' => 'Error Local: ' . $exception->getMessage(),
-                'file' => $exception->getFile(),
-                'line' => $exception->getLine(),
-                'type' => 'local_error'
+                'error' => 'Error Local en VPS: ' . $exception->getMessage(),
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
     }
