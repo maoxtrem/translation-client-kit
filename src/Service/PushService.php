@@ -11,8 +11,7 @@ final class PushService
     public function __construct(
         private readonly HttpClientInterface $httpClient,
         private readonly TranslationScanner $scanner,
-    ) {
-    }
+    ) {}
 
     public function push(): array
     {
@@ -33,9 +32,11 @@ final class PushService
             ],
         ]);
 
+        // src/Service/PushService.php - línea 40 aprox.
         return [
             'status' => $response->getStatusCode(),
             'count' => count($data['keys']),
+            'debug_keys' => $data['keys'], // <--- Añade esto para ver la lista en el JSON
             'message' => 'Sincronizacion enviada con exito.',
         ];
     }
