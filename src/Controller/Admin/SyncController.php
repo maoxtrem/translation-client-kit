@@ -66,4 +66,23 @@ final class SyncController extends AbstractController
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
     }
+
+    #[Route('/migrate-legacy', name: 'kit_sync_legacy', methods: ['POST'])]
+    public function migrateLegacy(PushService $pushService): JsonResponse
+    {
+        try {
+            $result = $pushService->pushLegacy();
+
+            return new JsonResponse([
+                'success' => true,
+                'status' => (int) ($result['status'] ?? 200),
+                'message' => sprintf('%s (%d semillas)', (string) ($result['message'] ?? 'Migracion ejecutada.'), (int) ($result['count'] ?? 0)),
+            ]);
+        } catch (\Throwable $exception) {
+            return new JsonResponse([
+                'success' => false,
+                'error' => $exception->getMessage(),
+            ], Response::HTTP_INTERNAL_SERVER_ERROR);
+        }
+    }
 }

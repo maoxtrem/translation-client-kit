@@ -22,6 +22,13 @@
                     <button onclick="handleAction('push')" id="btn-push" class="btn btn-success w-75">Subir llaves nuevas</button>
                 </div>
             </div>
+            <div class="row text-center mt-3 border-top pt-3">
+                <div class="col-md-12">
+                    <h4>MIGRACION DE LEGADO</h4>
+                    <p class="text-muted small">Lee archivos .es.yaml/.es.php en /translations y los sube con su contenido al Cerebro.</p>
+                    <button onclick="handleAction('migrate-legacy')" id="btn-migrate-legacy" class="btn btn-warning w-50">Subir traducciones antiguas</button>
+                </div>
+            </div>
             <div class="mt-4">
                 <div id="console-log" class="bg-light p-3 border rounded font-monospace small" style="height: 150px; overflow-y: auto;">
                     &gt; Esperando accion...
