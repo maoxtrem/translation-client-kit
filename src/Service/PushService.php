@@ -17,29 +17,46 @@ final class PushService
     {
         $data = $this->scanner->extract();
         $serviceName = $this->getServiceName();
+        $allKeys = $data['keys'];
+        
+        // Dividimos las 3,000+ llaves en trozos de 200
+        $chunks = array_chunk($allKeys, 200);
+        
+        $totalNuevas = 0;
+        $totalPromovidas = 0;
+        $lastStatus = 200;
 
-        [$status, $payload] = $this->requestSync([
-            // Backward compatible field names for servers that still parse project_code.
-            'service' => $serviceName,
-            'project_code' => $serviceName,
-            'keys' => $data['keys'],
-        ]);
+        foreach ($chunks as $chunk) {
+            [$status, $payload] = $this->requestSync([
+                'service' => $serviceName,
+                'project_code' => $serviceName,
+                'keys' => $chunk,
+            ]);
+
+            $lastStatus = $status;
+            $totalNuevas += (int) ($payload['nuevas'] ?? 0);
+            $totalPromovidas += (int) ($payload['promovidas'] ?? 0);
+        }
 
         return [
-            'status' => $status,
-            'count' => count($data['keys']),
-            'keys' => $data['keys'],
-            'remote' => $payload,
-            'message' => 'Sincronizacion enviada con exito.',
+            'status' => $lastStatus,
+            'count' => count($allKeys),
+            'keys' => $allKeys,
+            'remote' => [
+                'nuevas' => $totalNuevas,
+                'promovidas' => $totalPromovidas,
+                'paquetes' => count($chunks)
+            ],
+            'message' => sprintf('Sincronización completada en %d paquetes de 200.', count($chunks)),
         ];
     }
 
     public function pushLegacy(): array
     {
         $serviceName = $this->getServiceName();
-        $seeds = $this->scanner->extractLegacyTranslations();
+        $allSeeds = $this->scanner->extractLegacyTranslations();
 
-        if ($seeds === []) {
+        if ($allSeeds === []) {
             return [
                 'status' => 200,
                 'count' => 0,
@@ -48,21 +65,37 @@ final class PushService
             ];
         }
 
-        $keys = array_values(array_unique(array_column($seeds, 'key')));
+        // El legado pesa más, 200 es un número seguro para evitar Timeouts
+        $chunks = array_chunk($allSeeds, 200);
+        
+        $totalNuevas = 0;
+        $totalPromovidas = 0;
+        $lastStatus = 200;
 
-        [$status, $payload] = $this->requestSync([
-            'service' => $serviceName,
-            'project_code' => $serviceName,
-            'keys' => $keys,
-            'seeds' => $seeds,
-        ]);
+        foreach ($chunks as $chunk) {
+            $chunkKeys = array_values(array_unique(array_column($chunk, 'key')));
+            
+            [$status, $payload] = $this->requestSync([
+                'service' => $serviceName,
+                'project_code' => $serviceName,
+                'keys' => $chunkKeys,
+                'seeds' => $chunk,
+            ]);
+
+            $lastStatus = $status;
+            $totalNuevas += (int) ($payload['nuevas'] ?? 0);
+            $totalPromovidas += (int) ($payload['promovidas'] ?? 0);
+        }
 
         return [
-            'status' => $status,
-            'count' => count($seeds),
-            'keys' => $keys,
-            'remote' => $payload,
-            'message' => 'Migracion de legado enviada con exito.',
+            'status' => $lastStatus,
+            'count' => count($allSeeds),
+            'remote' => [
+                'nuevas' => $totalNuevas,
+                'promovidas' => $totalPromovidas,
+                'paquetes' => count($chunks)
+            ],
+            'message' => sprintf('Migración de legado enviada con éxito en %d paquetes.', count($chunks)),
         ];
     }
 
@@ -80,13 +113,17 @@ final class PushService
     {
         $url = $this->getSyncUrl();
 
-        $response = $this->httpClient->request('POST', $url, ['json' => $json]);
+        $response = $this->httpClient->request('POST', $url, [
+            'json' => $json,
+            'timeout' => 60, // Un minuto de margen por paquete
+        ]);
+        
         $status = $response->getStatusCode();
         $content = $response->getContent(false);
         $payload = $this->decodeJsonObject($content);
 
         if ($status < 200 || $status >= 300) {
-            $error = (string) ($payload['error'] ?? $payload['message'] ?? '');
+            $error = (string) ($payload['error'] ?? $payload['mensaje_real'] ?? $payload['message'] ?? '');
             if ($error === '') {
                 $error = sprintf('Error remoto HTTP %d al sincronizar.', $status);
             }
