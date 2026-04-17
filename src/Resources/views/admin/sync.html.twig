@@ -39,6 +39,15 @@
 </div>
 
 <script>
+function escapeHtml(value) {
+    return String(value)
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#039;');
+}
+
 async function handleAction(type) {
     const btn = document.getElementById(`btn-${type}`);
     const log = document.getElementById('console-log');
@@ -48,6 +57,9 @@ async function handleAction(type) {
     label.className = 'badge bg-warning';
     label.innerText = 'Procesando...';
     log.innerHTML += `<div class="text-muted"> [${type.toUpperCase()}] Iniciando...</div>`;
+    if (type === 'migrate-legacy') {
+        log.innerHTML += `<div class="text-warning"> CEREBRO: procesando llaves legacy enviadas desde el cliente...</div>`;
+    }
 
     try {
         const response = await fetch(`/admin/translations/${type}`, { method: 'POST' });
@@ -60,6 +72,26 @@ async function handleAction(type) {
             }
             if (Array.isArray(data.dump_files) && data.dump_files.length > 0) {
                 log.innerHTML += `<div class="text-primary"> ARCHIVOS DB: ${data.dump_files.join(', ')}</div>`;
+            }
+            if (type === 'migrate-legacy' && data.legacy_scan) {
+                const scan = data.legacy_scan;
+                const sentCount = Number(data.sent_keys_count ?? scan.eligible ?? 0);
+                const notSentCount = Number(data.not_sent_keys_count ?? scan.ineligible ?? 0);
+                const notSentKeys = Array.isArray(data.not_sent_keys) ? data.not_sent_keys : (Array.isArray(scan.ineligible_keys) ? scan.ineligible_keys : []);
+
+                log.innerHTML += `<div class="text-success"> SE ENVIARON AL CEREBRO ${sentCount} llaves para procesar.</div>`;
+                log.innerHTML += `<div class="text-danger"> NO SE ENVIARON ${notSentCount} llaves por no ser aptas.</div>`;
+
+                if (notSentKeys.length > 0) {
+                    const rows = notSentKeys.map((item) => {
+                        const key = escapeHtml(item.key ?? '');
+                        const reason = escapeHtml(item.reason ?? 'motivo no definido');
+                        const file = item.file ? ` <span class="text-muted">(${escapeHtml(item.file)})</span>` : '';
+                        return `<li><code>${key}</code> - ${reason}${file}</li>`;
+                    }).join('');
+
+                    log.innerHTML += `<div class="text-danger"> LLAVES NO ENVIADAS (corrige y vuelve a intentar):<ul class="mb-1">${rows}</ul></div>`;
+                }
             }
             label.className = 'badge bg-success';
             label.innerText = 'Exito';

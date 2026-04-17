@@ -54,13 +54,27 @@ final class PushService
     public function pushLegacy(): array
     {
         $serviceName = $this->getServiceName();
-        $allSeeds = $this->scanner->extractLegacyTranslations();
+        $report = $this->scanner->extractLegacyTranslationsReport();
+        $allSeeds = $report['seeds'];
+        $scanStats = $report['stats'];
+        $ineligibleKeys = $report['ineligible_keys'];
 
         if ($allSeeds === []) {
             return [
                 'status' => 200,
                 'count' => 0,
                 'message' => 'No se encontraron traducciones legado para migrar.',
+                'local_filter' => [
+                    'sent_keys_count' => 0,
+                    'not_sent_keys_count' => (int) ($scanStats['ineligible'] ?? 0),
+                    'not_sent_keys' => array_values($ineligibleKeys),
+                ],
+                'legacy_scan' => [
+                    'found' => (int) ($scanStats['found'] ?? 0),
+                    'eligible' => (int) ($scanStats['eligible'] ?? 0),
+                    'ineligible' => (int) ($scanStats['ineligible'] ?? 0),
+                    'ineligible_keys' => array_values($ineligibleKeys),
+                ],
                 'remote' => [],
             ];
         }
@@ -94,6 +108,17 @@ final class PushService
                 'nuevas' => $totalNuevas,
                 'promovidas' => $totalPromovidas,
                 'paquetes' => count($chunks)
+            ],
+            'local_filter' => [
+                'sent_keys_count' => count($allSeeds),
+                'not_sent_keys_count' => (int) ($scanStats['ineligible'] ?? 0),
+                'not_sent_keys' => array_values($ineligibleKeys),
+            ],
+            'legacy_scan' => [
+                'found' => (int) ($scanStats['found'] ?? 0),
+                'eligible' => (int) ($scanStats['eligible'] ?? 0),
+                'ineligible' => (int) ($scanStats['ineligible'] ?? 0),
+                'ineligible_keys' => array_values($ineligibleKeys),
             ],
             'message' => sprintf('Migración de legado enviada con éxito en %d paquetes.', count($chunks)),
         ];

@@ -1,6 +1,6 @@
 {
   "name": "maoxtrem/translation-client-kit",
-  "description": "Bundle cliente para sincronizacion y carga local de traducciones.",
+  "description": "Bundle cliente para sincronizacion y carga local de traducciones. test",
   "type": "symfony-bundle",
   "license": "proprietary",
   "require": {

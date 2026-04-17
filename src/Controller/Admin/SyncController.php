@@ -83,11 +83,23 @@ final class SyncController extends AbstractController
     {
         try {
             $result = $pushService->pushLegacy();
+            $legacyScan = is_array($result['legacy_scan'] ?? null) ? $result['legacy_scan'] : [];
+            $localFilter = is_array($result['local_filter'] ?? null) ? $result['local_filter'] : [];
 
             return new JsonResponse([
                 'success' => true,
                 'status' => (int) ($result['status'] ?? 200),
                 'message' => sprintf('%s (%d semillas)', (string) ($result['message'] ?? 'Migracion ejecutada.'), (int) ($result['count'] ?? 0)),
+                'sent_keys_count' => (int) ($localFilter['sent_keys_count'] ?? ($legacyScan['eligible'] ?? 0)),
+                'not_sent_keys_count' => (int) ($localFilter['not_sent_keys_count'] ?? ($legacyScan['ineligible'] ?? 0)),
+                'not_sent_keys' => array_values($localFilter['not_sent_keys'] ?? ($legacyScan['ineligible_keys'] ?? [])),
+                'legacy_scan' => [
+                    'found' => (int) ($legacyScan['found'] ?? 0),
+                    'eligible' => (int) ($legacyScan['eligible'] ?? 0),
+                    'ineligible' => (int) ($legacyScan['ineligible'] ?? 0),
+                    'ineligible_keys' => array_values($legacyScan['ineligible_keys'] ?? []),
+                ],
+                'remote' => is_array($result['remote'] ?? null) ? $result['remote'] : [],
             ]);
         } catch (\Throwable $exception) {
             return new JsonResponse([

@@ -45,20 +45,49 @@ final class TranslationScanner
      */
     public function extractLegacyTranslations(): array
     {
+        $report = $this->extractLegacyTranslationsReport();
+
+        return $report['seeds'];
+    }
+
+    /**
+     * @return array{
+     *   seeds: array<int, array{key: string, content: string, locale: string}>,
+     *   stats: array{found: int, eligible: int, ineligible: int},
+     *   ineligible_keys: array<int, array{key: string, reason: string, file: string}>
+     * }
+     */
+    public function extractLegacyTranslationsReport(): array
+    {
         $path = $this->projectDir . '/translations';
         if (!is_dir($path)) {
-            return [];
+            return [
+                'seeds' => [],
+                'stats' => [
+                    'found' => 0,
+                    'eligible' => 0,
+                    'ineligible' => 0,
+                ],
+                'ineligible_keys' => [],
+            ];
         }
 
         $finder = (new Finder())->files()->in($path)->name('*.es.yaml')->name('*.es.php');
         /** @var array<string, array{key: string, content: string, locale: string}> $seeds */
         $seeds = [];
+        /** @var array<string, bool> $found */
+        $found = [];
+        /** @var array<int, array{key: string, reason: string, file: string}> $ineligible */
+        $ineligible = [];
+        /** @var array<string, bool> $ineligibleIndex */
+        $ineligibleIndex = [];
 
         foreach ($finder as $file) {
             $realPath = $file->getRealPath();
             if ($realPath === false) {
                 continue;
             }
+            $relativePath = $this->normalizePath($realPath);
 
             $data = [];
 
@@ -75,13 +104,19 @@ final class TranslationScanner
             }
 
             foreach ($this->flattenArray($data) as $key => $content) {
-                $normalizedKey = $this->normalizeLegacyKey((string) $key);
-                if ($normalizedKey === '') {
+                [$normalizedKey, $invalidReason, $rawKey] = $this->analyzeLegacyKey((string) $key);
+                if ($rawKey !== '') {
+                    $found[$rawKey] = true;
+                }
+
+                if ($invalidReason !== null) {
+                    $this->addIneligible($ineligible, $ineligibleIndex, $rawKey !== '' ? $rawKey : '(vacia)', $invalidReason, $relativePath);
                     continue;
                 }
 
                 $normalizedContent = trim((string) $content);
                 if ($normalizedContent === '') {
+                    $this->addIneligible($ineligible, $ineligibleIndex, $normalizedKey, 'contenido vacio', $relativePath);
                     continue;
                 }
 
@@ -94,7 +129,15 @@ final class TranslationScanner
             }
         }
 
-        return array_values($seeds);
+        return [
+            'seeds' => array_values($seeds),
+            'stats' => [
+                'found' => count($found),
+                'eligible' => count($seeds),
+                'ineligible' => count($ineligible),
+            ],
+            'ineligible_keys' => $ineligible,
+        ];
     }
 
     /**
@@ -122,23 +165,52 @@ final class TranslationScanner
         return $result;
     }
 
-    private function normalizeLegacyKey(string $key): string
+    private function analyzeLegacyKey(string $key): array
     {
-        $normalized = strtolower(trim($key));
-        if ($normalized === '') {
-            return '';
+        $rawKey = strtolower(trim($key));
+        if ($rawKey === '') {
+            return ['', 'clave vacia', ''];
         }
 
-        $segments = array_values(array_filter(explode('.', $normalized), static fn (string $v): bool => $v !== ''));
+        $segments = array_values(array_filter(explode('.', $rawKey), static fn (string $v): bool => $v !== ''));
         if (count($segments) < 1 || count($segments) > 3) {
-            return '';
+            return ['', 'formato invalido (maximo 3 niveles separados por punto)', $rawKey];
         }
 
         $normalized = implode('.', $segments);
         if (!preg_match('/^[a-z0-9_]+(\.[a-z0-9_]+){0,2}$/', $normalized)) {
-            return '';
+            return ['', 'formato invalido (solo letras, numeros, guion bajo y puntos)', $rawKey];
         }
 
-        return $normalized;
+        return [$normalized, null, $rawKey];
+    }
+
+    /**
+     * @param array<int, array{key: string, reason: string, file: string}> $ineligible
+     * @param array<string, bool>                                     $index
+     */
+    private function addIneligible(array &$ineligible, array &$index, string $key, string $reason, string $file): void
+    {
+        $id = $key . '|' . $reason;
+        if (isset($index[$id])) {
+            return;
+        }
+
+        $index[$id] = true;
+        $ineligible[] = [
+            'key' => $key,
+            'reason' => $reason,
+            'file' => $file,
+        ];
+    }
+
+    private function normalizePath(string $path): string
+    {
+        $projectPath = rtrim($this->projectDir, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR;
+        if (str_starts_with($path, $projectPath)) {
+            return str_replace(DIRECTORY_SEPARATOR, '/', substr($path, strlen($projectPath)));
+        }
+
+        return str_replace(DIRECTORY_SEPARATOR, '/', $path);
     }
 }
