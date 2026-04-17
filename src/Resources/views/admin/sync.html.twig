@@ -25,7 +25,7 @@
             <div class="row text-center mt-3 border-top pt-3">
                 <div class="col-md-12">
                     <h4>MIGRACION DE LEGADO</h4>
-                    <p class="text-muted small">Lee archivos .es.yaml/.es.php en /translations y los sube con su contenido al Cerebro.</p>
+                    <p class="text-muted small">Lee archivos .es.yaml/.es.yml/.es.php en /translations y sube solo las llaves validas al Cerebro.</p>
                     <button onclick="handleAction('migrate-legacy')" id="btn-migrate-legacy" class="btn btn-warning w-50">Subir traducciones antiguas</button>
                 </div>
             </div>
@@ -48,6 +48,29 @@ function escapeHtml(value) {
         .replaceAll("'", '&#039;');
 }
 
+async function fetchJsonOrThrow(url, options = {}) {
+    const response = await fetch(url, options);
+    const body = await response.text();
+    let data = {};
+
+    if (body !== '') {
+        try {
+            data = JSON.parse(body);
+        } catch (error) {
+            const compactBody = body.replace(/\s+/g, ' ').trim();
+            const preview = compactBody.slice(0, 280);
+            throw new Error(`Respuesta no JSON en ${url} (HTTP ${response.status}). Inicio: ${preview || '[vacio]'}`);
+        }
+    }
+
+    if (!response.ok) {
+        const msg = data.error ?? data.message ?? `HTTP ${response.status}`;
+        throw new Error(`${msg} [${url}]`);
+    }
+
+    return data;
+}
+
 async function handleAction(type) {
     const btn = document.getElementById(`btn-${type}`);
     const log = document.getElementById('console-log');
@@ -57,13 +80,192 @@ async function handleAction(type) {
     label.className = 'badge bg-warning';
     label.innerText = 'Procesando...';
     log.innerHTML += `<div class="text-muted"> [${type.toUpperCase()}] Iniciando...</div>`;
-    if (type === 'migrate-legacy') {
-        log.innerHTML += `<div class="text-warning"> CEREBRO: procesando llaves legacy enviadas desde el cliente...</div>`;
-    }
-
     try {
-        const response = await fetch(`/admin/translations/${type}`, { method: 'POST' });
-        const data = await response.json();
+        if (type === 'migrate-legacy') {
+            log.innerHTML += `<div class="text-info"> FASE 1 (CLIENTE): escaneando archivos legacy y validando llaves...</div>`;
+            const scanData = await fetchJsonOrThrow('/admin/translations/migrate-legacy/scan', { method: 'POST' });
+
+            if (!scanData.success) {
+                throw new Error(scanData.error || 'Error en fase de escaneo.');
+            }
+
+            const phase1 = scanData.phase_1 ?? {};
+            const sentCount = Number(phase1.sent_keys_count ?? scanData.sent_keys_count ?? 0);
+            const notSentCount = Number(phase1.not_sent_keys_count ?? scanData.not_sent_keys_count ?? 0);
+            const notSentLocalExistingCount = Number(phase1.not_sent_local_existing_count ?? scanData.not_sent_local_existing_count ?? 0);
+            const notSentErrorCount = Number(phase1.not_sent_error_count ?? scanData.not_sent_error_count ?? 0);
+            const notSentKeys = Array.isArray(phase1.not_sent_keys) ? phase1.not_sent_keys : (Array.isArray(scanData.not_sent_keys) ? scanData.not_sent_keys : []);
+
+            log.innerHTML += `<div class="text-success"> FASE 1 (CLIENTE): se enviaron ${sentCount} llaves al servidor para procesar.</div>`;
+            log.innerHTML += `<div class="text-secondary"> FASE 1 (CLIENTE): no se enviaron ${notSentCount} llaves en total.</div>`;
+            log.innerHTML += `<div class="text-info"> FASE 1 (CLIENTE): ${notSentLocalExistingCount} no se enviaron porque ya existen en local con el mismo valor.</div>`;
+            log.innerHTML += `<div class="text-danger"> FASE 1 (CLIENTE): ${notSentErrorCount} no se enviaron por errores de validacion.</div>`;
+
+            if (notSentErrorCount > 0 && notSentKeys.length > 0) {
+                const rows = notSentKeys.map((item) => {
+                    const key = escapeHtml(item.key ?? '');
+                    const reason = escapeHtml(item.reason ?? 'motivo no definido');
+                    const file = item.file ? ` <span class="text-muted">(${escapeHtml(item.file)})</span>` : '';
+                    return `<li><code>${key}</code> - ${reason}${file}</li>`;
+                }).join('');
+
+                log.innerHTML += `<div class="text-danger"> FASE 1 (CLIENTE) - LLAVES CON ERROR (corrige y vuelve a intentar):<ul class="mb-1">${rows}</ul></div>`;
+            }
+
+            if (sentCount <= 0) {
+                log.innerHTML += `<div class="text-warning"> FASE 2 (CEREBRO): no se ejecuta porque no hubo llaves validas para enviar.</div>`;
+                label.className = 'badge bg-success';
+                label.innerText = 'Exito';
+                return;
+            }
+
+            const configuredChunkSize = Number(scanData.phase_2?.chunk_size ?? 200);
+            const totalChunks = Number(scanData.phase_2?.chunks ?? Math.ceil(sentCount / configuredChunkSize));
+            let okChunks = 0;
+            let errorChunks = 0;
+            let nuevas = 0;
+            let promovidas = 0;
+
+            log.innerHTML += `<div class="text-warning"> FASE 2 (CEREBRO): iniciando envio por ${totalChunks} paquetes de ${configuredChunkSize}...</div>`;
+
+            for (let i = 1; i <= totalChunks; i++) {
+                log.innerHTML += `<div class="text-muted"> FASE 2 (CEREBRO): enviando paquete ${i}/${totalChunks}...</div>`;
+
+                try {
+                    const sendData = await fetchJsonOrThrow('/admin/translations/migrate-legacy/send-chunk', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            chunk: i,
+                            chunk_size: configuredChunkSize,
+                        }),
+                    });
+
+                    if (!sendData.success) {
+                        throw new Error(sendData.error || 'Error en fase de envio por paquete.');
+                    }
+
+                    const phase2 = sendData.phase_2 ?? {};
+                    const chunk = phase2.chunk_report ?? (Array.isArray(phase2.chunk_reports) ? (phase2.chunk_reports[0] ?? {}) : {});
+                    const message = escapeHtml(chunk.message ?? `Paquete ${i}/${totalChunks} procesado.`);
+
+                    if (chunk.ok) {
+                        okChunks += 1;
+                        nuevas += Number(chunk.nuevas ?? 0);
+                        promovidas += Number(chunk.promovidas ?? 0);
+                        log.innerHTML += `<div class="text-success"> FASE 2 (CEREBRO): ${message}</div>`;
+                    } else {
+                        errorChunks += 1;
+                        const statusLabel = chunk.status ? `HTTP ${Number(chunk.status)}` : 'sin HTTP';
+                        const errorText = escapeHtml(chunk.error ?? 'Error desconocido');
+                        log.innerHTML += `<div class="text-danger"> FASE 2 (CEREBRO): ${message} (${statusLabel})</div>`;
+                        log.innerHTML += `<div class="text-danger"> DETALLE ERROR PAQUETE ${Number(chunk.chunk || i)}: ${errorText}</div>`;
+                    }
+                } catch (chunkError) {
+                    errorChunks += 1;
+                    log.innerHTML += `<div class="text-danger"> FASE 2 (CEREBRO): paquete ${i}/${totalChunks} con error de transporte.</div>`;
+                    log.innerHTML += `<div class="text-danger"> DETALLE ERROR PAQUETE ${i}: ${escapeHtml(chunkError.message || 'Error no controlado')}</div>`;
+                }
+            }
+
+            log.innerHTML += `<div class="text-primary"> FASE 2 (CEREBRO): resumen -> paquetes ${totalChunks} de ${configuredChunkSize}, exitosos ${okChunks}, con error ${errorChunks}.</div>`;
+            log.innerHTML += `<div class="text-success"> FASE 2 (CEREBRO): respuesta acumulada -> nuevas ${nuevas}, promovidas ${promovidas}.</div>`;
+
+            label.className = errorChunks > 0 ? 'badge bg-warning' : 'badge bg-success';
+            label.innerText = errorChunks > 0 ? 'Parcial' : 'Exito';
+            return;
+        }
+
+        if (type === 'push') {
+            log.innerHTML += `<div class="text-info"> FASE 1 (CLIENTE): escaneando js, twig y src, deduplicando por key y validando...</div>`;
+            const data = await fetchJsonOrThrow('/admin/translations/push', { method: 'POST' });
+
+            if (!data.success) {
+                throw new Error(data.error || 'Error en push.');
+            }
+
+            const scan = data.push_scan ?? {};
+            const phase1 = data.phase_1 ?? {};
+            const phase2 = data.phase_2 ?? {};
+            const sentCount = Number(phase1.sent_keys_count ?? data.sent_keys_count ?? 0);
+            const notSentCount = Number(phase1.not_sent_keys_count ?? data.not_sent_keys_count ?? 0);
+            const notSentLocalExistingCount = Number(phase1.not_sent_local_existing_count ?? data.not_sent_local_existing_count ?? 0);
+            const notSentErrorCount = Number(phase1.not_sent_error_count ?? data.not_sent_error_count ?? 0);
+            const notSentKeys = Array.isArray(phase1.not_sent_keys) ? phase1.not_sent_keys : (Array.isArray(data.not_sent_keys) ? data.not_sent_keys : []);
+            const duplicateKeys = Array.isArray(phase1.duplicate_keys) ? phase1.duplicate_keys : (Array.isArray(scan.duplicate_keys) ? scan.duplicate_keys : []);
+            const foundOccurrences = Number(scan.found ?? 0);
+            const uniqueKeys = Number(scan.unique ?? 0);
+            const duplicateKeysCount = Number(scan.duplicated_keys_count ?? duplicateKeys.length ?? 0);
+            const deduplicatedOccurrences = Number(scan.deduplicated_occurrences ?? 0);
+            const scannedFiles = Number(scan.files ?? 0);
+
+            log.innerHTML += `<div class="text-primary"> FASE 1 (CLIENTE): archivos escaneados ${scannedFiles}, ocurrencias ${foundOccurrences}, unicas ${uniqueKeys}.</div>`;
+            log.innerHTML += `<div class="text-secondary"> FASE 1 (CLIENTE): llaves repetidas ${duplicateKeysCount}, ocurrencias descartadas por deduplicacion ${deduplicatedOccurrences}.</div>`;
+            log.innerHTML += `<div class="text-success"> FASE 1 (CLIENTE): se enviaran ${sentCount} llaves.</div>`;
+            log.innerHTML += `<div class="text-secondary"> FASE 1 (CLIENTE): no se enviaran ${notSentCount} llaves en total.</div>`;
+            log.innerHTML += `<div class="text-info"> FASE 1 (CLIENTE): ${notSentLocalExistingCount} no se enviaron porque ya existen en traduccion_local.</div>`;
+            log.innerHTML += `<div class="text-danger"> FASE 1 (CLIENTE): ${notSentErrorCount} no se enviaron por errores de validacion.</div>`;
+
+            if (duplicateKeys.length > 0) {
+                const rows = duplicateKeys.map((item) => {
+                    const key = escapeHtml(item.key ?? '');
+                    const occurrences = Number(item.occurrences ?? 0);
+                    const files = Array.isArray(item.files) && item.files.length > 0 ? ` <span class="text-muted">(${escapeHtml(item.files.join(', '))})</span>` : '';
+                    return `<li><code>${key}</code> - repetida ${occurrences} veces${files}</li>`;
+                }).join('');
+
+                log.innerHTML += `<div class="text-warning"> FASE 1 (CLIENTE) - LLAVES REPETIDAS (se envia solo una por key):<ul class="mb-1">${rows}</ul></div>`;
+            }
+
+            if (notSentKeys.length > 0) {
+                const rows = notSentKeys.map((item) => {
+                    const key = escapeHtml(item.key ?? '');
+                    const reason = escapeHtml(item.reason ?? 'motivo no definido');
+                    const file = item.file ? ` <span class="text-muted">(${escapeHtml(item.file)})</span>` : '';
+                    return `<li><code>${key}</code> - ${reason}${file}</li>`;
+                }).join('');
+
+                log.innerHTML += `<div class="text-danger"> FASE 1 (CLIENTE) - LLAVES NO ENVIADAS:<ul class="mb-1">${rows}</ul></div>`;
+            }
+
+            if (!phase2.attempted || sentCount <= 0) {
+                log.innerHTML += `<div class="text-warning"> FASE 2 (CEREBRO): no se ejecuta porque no hubo llaves aptas para enviar.</div>`;
+                label.className = 'badge bg-success';
+                label.innerText = 'Exito';
+                return;
+            }
+
+            const chunkReports = Array.isArray(phase2.chunk_reports) ? phase2.chunk_reports : [];
+            chunkReports.forEach((chunk) => {
+                const message = escapeHtml(chunk.message ?? 'Paquete procesado.');
+                if (chunk.ok) {
+                    log.innerHTML += `<div class="text-success"> FASE 2 (CEREBRO): ${message}</div>`;
+                    return;
+                }
+
+                const statusLabel = chunk.status ? `HTTP ${Number(chunk.status)}` : 'sin HTTP';
+                const errorText = escapeHtml(chunk.error ?? 'Error desconocido');
+                log.innerHTML += `<div class="text-danger"> FASE 2 (CEREBRO): ${message} (${statusLabel})</div>`;
+                log.innerHTML += `<div class="text-danger"> DETALLE ERROR PAQUETE ${Number(chunk.chunk || 0)}: ${errorText}</div>`;
+            });
+
+            const remote = data.remote ?? {};
+            const chunks = Number(phase2.chunks ?? remote.paquetes ?? chunkReports.length ?? 0);
+            const chunkSize = Number(phase2.chunk_size ?? remote.chunk_size ?? 0);
+            const chunksOk = Number(phase2.chunks_ok ?? remote.paquetes_exitosos ?? 0);
+            const chunksError = Number(phase2.chunks_error ?? remote.paquetes_con_error ?? 0);
+            const nuevas = Number(remote.nuevas ?? 0);
+            const promovidas = Number(remote.promovidas ?? 0);
+
+            log.innerHTML += `<div class="text-primary"> FASE 2 (CEREBRO): resumen -> paquetes ${chunks} de ${chunkSize}, exitosos ${chunksOk}, con error ${chunksError}.</div>`;
+            log.innerHTML += `<div class="text-success"> FASE 2 (CEREBRO): respuesta acumulada -> nuevas ${nuevas}, promovidas ${promovidas}.</div>`;
+
+            label.className = chunksError > 0 ? 'badge bg-warning' : 'badge bg-success';
+            label.innerText = chunksError > 0 ? 'Parcial' : 'Exito';
+            return;
+        }
+
+        const data = await fetchJsonOrThrow(`/admin/translations/${type}`, { method: 'POST' });
 
         if (data.success) {
             log.innerHTML += `<div class="text-success"> OK: ${data.message}</div>`;
@@ -73,33 +275,13 @@ async function handleAction(type) {
             if (Array.isArray(data.dump_files) && data.dump_files.length > 0) {
                 log.innerHTML += `<div class="text-primary"> ARCHIVOS DB: ${data.dump_files.join(', ')}</div>`;
             }
-            if (type === 'migrate-legacy' && data.legacy_scan) {
-                const scan = data.legacy_scan;
-                const sentCount = Number(data.sent_keys_count ?? scan.eligible ?? 0);
-                const notSentCount = Number(data.not_sent_keys_count ?? scan.ineligible ?? 0);
-                const notSentKeys = Array.isArray(data.not_sent_keys) ? data.not_sent_keys : (Array.isArray(scan.ineligible_keys) ? scan.ineligible_keys : []);
-
-                log.innerHTML += `<div class="text-success"> SE ENVIARON AL CEREBRO ${sentCount} llaves para procesar.</div>`;
-                log.innerHTML += `<div class="text-danger"> NO SE ENVIARON ${notSentCount} llaves por no ser aptas.</div>`;
-
-                if (notSentKeys.length > 0) {
-                    const rows = notSentKeys.map((item) => {
-                        const key = escapeHtml(item.key ?? '');
-                        const reason = escapeHtml(item.reason ?? 'motivo no definido');
-                        const file = item.file ? ` <span class="text-muted">(${escapeHtml(item.file)})</span>` : '';
-                        return `<li><code>${key}</code> - ${reason}${file}</li>`;
-                    }).join('');
-
-                    log.innerHTML += `<div class="text-danger"> LLAVES NO ENVIADAS (corrige y vuelve a intentar):<ul class="mb-1">${rows}</ul></div>`;
-                }
-            }
             label.className = 'badge bg-success';
             label.innerText = 'Exito';
         } else {
             throw new Error(data.error);
         }
     } catch (e) {
-        log.innerHTML += `<div class="text-danger"> ERROR: ${e.message}</div>`;
+        log.innerHTML += `<div class="text-danger"> ERROR: ${escapeHtml(e.message || 'Error no controlado')}</div>`;
         label.className = 'badge bg-danger';
         label.innerText = 'Error';
     } finally {

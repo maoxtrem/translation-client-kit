@@ -9,8 +9,10 @@ use Symfony\Component\Yaml\Yaml;
 
 final class TranslationScanner
 {
-    private const FUNCTION_CALL_REGEX = '/(?:->\s*)?trans\(\s*[\'"]([a-zA-Z0-9_]+(?:\.[a-zA-Z0-9_]+)*)[\'"]\s*[,)]/i';
+    private const EXCLUDED_DIRS = ['vendor', 'var', 'node_modules', 'migrations', 'tests', '.git'];
+    private const FUNCTION_CALL_REGEX = '/(?:->\s*trans|\btrans|\$t|i18n\.t)\s*\(\s*[\'"]([a-zA-Z0-9_]+(?:\.[a-zA-Z0-9_]+)*)[\'"]\s*[,)]/i';
     private const TWIG_TRANS_FILTER_REGEX = '/[\'"]([a-zA-Z0-9_]+(?:\.[a-zA-Z0-9_]+)*)[\'"]\s*\|\s*trans\b/i';
+    private const TWIG_TRANS_TAG_REGEX = '/{%\s*trans\s*%}\s*([a-zA-Z0-9_]+(?:\.[a-zA-Z0-9_]+)*)\s*{%\s*endtrans\s*%}/i';
 
     public function __construct(private readonly string $projectDir)
     {
@@ -21,23 +23,61 @@ final class TranslationScanner
      */
     public function extract(): array
     {
-        $finder = (new Finder())->files()->in($this->projectDir)
-            ->exclude(['vendor', 'var', 'node_modules', 'migrations', 'tests', '.git'])
-            ->name('*.php')
-            ->name('*.twig');
+        $report = $this->extractRuntimeTranslationsReport();
+        /** @var array<int, array{key: string, file: string}> $entries */
+        $entries = array_values($report['entries'] ?? []);
 
         $keys = [];
-        foreach ($finder as $file) {
-            $content = $file->getContents();
-            preg_match_all(self::FUNCTION_CALL_REGEX, $content, $m1);
-            preg_match_all(self::TWIG_TRANS_FILTER_REGEX, $content, $m2);
-
-            foreach (array_merge($m1[1] ?? [], $m2[1] ?? []) as $k) {
-                $keys[] = strtolower(trim($k));
+        foreach ($entries as $entry) {
+            $key = strtolower(trim((string) ($entry['key'] ?? '')));
+            if ($key === '') {
+                continue;
             }
+
+            $keys[] = $key;
         }
 
         return ['keys' => array_values(array_unique($keys))];
+    }
+
+    /**
+     * @return array{
+     *   entries: array<int, array{key: string, file: string}>,
+     *   stats: array{found: int, files: int}
+     * }
+     */
+    public function extractRuntimeTranslationsReport(): array
+    {
+        $files = $this->collectRuntimeFiles();
+        /** @var array<int, array{key: string, file: string}> $entries */
+        $entries = [];
+
+        foreach ($files as $absolutePath => $relativePath) {
+            $content = @file_get_contents($absolutePath);
+            if (!is_string($content) || $content === '') {
+                continue;
+            }
+
+            foreach ($this->extractKeysFromContent($content) as $key) {
+                $normalized = strtolower(trim($key));
+                if ($normalized === '') {
+                    continue;
+                }
+
+                $entries[] = [
+                    'key' => $normalized,
+                    'file' => $relativePath,
+                ];
+            }
+        }
+
+        return [
+            'entries' => $entries,
+            'stats' => [
+                'found' => count($entries),
+                'files' => count($files),
+            ],
+        ];
     }
 
     /**
@@ -72,15 +112,21 @@ final class TranslationScanner
             ];
         }
 
-        $finder = (new Finder())->files()->in($path)->name('*.es.yaml')->name('*.es.php');
+        $finder = (new Finder())->files()->in($path)->name('*.es.yaml')->name('*.es.yml')->name('*.es.php');
         /** @var array<string, array{key: string, content: string, locale: string}> $seeds */
         $seeds = [];
+        /** @var array<string, string> $seedFiles */
+        $seedFiles = [];
         /** @var array<string, bool> $found */
         $found = [];
         /** @var array<int, array{key: string, reason: string, file: string}> $ineligible */
         $ineligible = [];
         /** @var array<string, bool> $ineligibleIndex */
         $ineligibleIndex = [];
+        /**
+         * @var array<string, array{values: array<string, bool>, files: array<string, bool>}>
+         */
+        $conflictedKeys = [];
 
         foreach ($finder as $file) {
             $realPath = $file->getRealPath();
@@ -91,7 +137,7 @@ final class TranslationScanner
 
             $data = [];
 
-            if ($file->getExtension() === 'yaml') {
+            if (in_array($file->getExtension(), ['yaml', 'yml'], true)) {
                 $parsed = Yaml::parseFile($realPath);
                 if (is_array($parsed)) {
                     $data = $parsed;
@@ -120,13 +166,44 @@ final class TranslationScanner
                     continue;
                 }
 
-                // Keep last value per key if duplicates exist across files/domains.
-                $seeds[$normalizedKey] = [
-                    'key' => $normalizedKey,
-                    'content' => $normalizedContent,
-                    'locale' => 'es',
-                ];
+                if (isset($conflictedKeys[$normalizedKey])) {
+                    $this->registerConflictValue($conflictedKeys, $normalizedKey, $normalizedContent, $relativePath);
+                    continue;
+                }
+
+                if (!isset($seeds[$normalizedKey])) {
+                    $seeds[$normalizedKey] = [
+                        'key' => $normalizedKey,
+                        'content' => $normalizedContent,
+                        'locale' => 'es',
+                    ];
+                    $seedFiles[$normalizedKey] = $relativePath;
+                    continue;
+                }
+
+                if ($seeds[$normalizedKey]['content'] === $normalizedContent) {
+                    // Same key and same value across files: keep a single seed.
+                    continue;
+                }
+
+                // Same key with different value across files: do not send this key.
+                $this->registerConflictValue($conflictedKeys, $normalizedKey, $seeds[$normalizedKey]['content'], $seedFiles[$normalizedKey] ?? 'desconocido');
+                $this->registerConflictValue($conflictedKeys, $normalizedKey, $normalizedContent, $relativePath);
+                unset($seeds[$normalizedKey], $seedFiles[$normalizedKey]);
             }
+        }
+
+        foreach ($conflictedKeys as $key => $meta) {
+            $files = array_keys($meta['files']);
+            sort($files);
+
+            $this->addIneligible(
+                $ineligible,
+                $ineligibleIndex,
+                $key,
+                'clave duplicada con valores diferentes',
+                implode(', ', $files)
+            );
         }
 
         return [
@@ -202,6 +279,85 @@ final class TranslationScanner
             'reason' => $reason,
             'file' => $file,
         ];
+    }
+
+    /**
+     * @param array<string, array{values: array<string, bool>, files: array<string, bool>}> $conflicts
+     */
+    private function registerConflictValue(array &$conflicts, string $key, string $value, string $file): void
+    {
+        if (!isset($conflicts[$key])) {
+            $conflicts[$key] = [
+                'values' => [],
+                'files' => [],
+            ];
+        }
+
+        $conflicts[$key]['values'][$value] = true;
+        $conflicts[$key]['files'][$file] = true;
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    private function collectRuntimeFiles(): array
+    {
+        /** @var array<string, string> $files */
+        $files = [];
+
+        $globalFinder = (new Finder())
+            ->files()
+            ->in($this->projectDir)
+            ->exclude(self::EXCLUDED_DIRS)
+            ->name('*.js')
+            ->name('*.twig');
+        $this->appendFinderFiles($files, $globalFinder);
+
+        $srcPath = $this->projectDir . '/src';
+        if (is_dir($srcPath)) {
+            $srcFinder = (new Finder())
+                ->files()
+                ->in($srcPath)
+                ->name('*.php')
+                ->name('*.js')
+                ->name('*.twig');
+            $this->appendFinderFiles($files, $srcFinder);
+        }
+
+        return $files;
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function extractKeysFromContent(string $content): array
+    {
+        preg_match_all(self::FUNCTION_CALL_REGEX, $content, $m1);
+        preg_match_all(self::TWIG_TRANS_FILTER_REGEX, $content, $m2);
+        preg_match_all(self::TWIG_TRANS_TAG_REGEX, $content, $m3);
+
+        /** @var array<int, string> $keys */
+        $keys = [];
+        foreach (array_merge($m1[1] ?? [], $m2[1] ?? [], $m3[1] ?? []) as $key) {
+            $keys[] = (string) $key;
+        }
+
+        return $keys;
+    }
+
+    /**
+     * @param array<string, string> $files
+     */
+    private function appendFinderFiles(array &$files, Finder $finder): void
+    {
+        foreach ($finder as $file) {
+            $realPath = $file->getRealPath();
+            if ($realPath === false) {
+                continue;
+            }
+
+            $files[$realPath] = $this->normalizePath($realPath);
+        }
     }
 
     private function normalizePath(string $path): string
