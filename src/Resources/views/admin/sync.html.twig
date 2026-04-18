@@ -30,7 +30,10 @@
                 </div>
             </div>
             <div class="mt-4">
-                <div id="console-log" class="bg-light p-3 border rounded font-monospace small" style="height: 150px; overflow-y: auto;">
+                <div class="d-flex justify-content-end mb-2">
+                    <button type="button" onclick="clearConsoleLog()" class="btn btn-outline-secondary btn-sm">Limpiar log</button>
+                </div>
+                <div id="console-log" class="bg-light p-3 border rounded font-monospace small" style="height: 300px; overflow-y: auto;">
                     &gt; Esperando accion...
                 </div>
             </div>
@@ -46,6 +49,15 @@ function escapeHtml(value) {
         .replaceAll('>', '&gt;')
         .replaceAll('"', '&quot;')
         .replaceAll("'", '&#039;');
+}
+
+function clearConsoleLog() {
+    const log = document.getElementById('console-log');
+    if (!log) {
+        return;
+    }
+
+    log.innerHTML = '&gt; Esperando accion...';
 }
 
 async function fetchJsonOrThrow(url, options = {}) {
@@ -192,10 +204,9 @@ async function handleAction(type) {
             const notSentLocalExistingCount = Number(phase1.not_sent_local_existing_count ?? data.not_sent_local_existing_count ?? 0);
             const notSentErrorCount = Number(phase1.not_sent_error_count ?? data.not_sent_error_count ?? 0);
             const notSentKeys = Array.isArray(phase1.not_sent_keys) ? phase1.not_sent_keys : (Array.isArray(data.not_sent_keys) ? data.not_sent_keys : []);
-            const duplicateKeys = Array.isArray(phase1.duplicate_keys) ? phase1.duplicate_keys : (Array.isArray(scan.duplicate_keys) ? scan.duplicate_keys : []);
             const foundOccurrences = Number(scan.found ?? 0);
             const uniqueKeys = Number(scan.unique ?? 0);
-            const duplicateKeysCount = Number(scan.duplicated_keys_count ?? duplicateKeys.length ?? 0);
+            const duplicateKeysCount = Number(scan.duplicated_keys_count ?? 0);
             const deduplicatedOccurrences = Number(scan.deduplicated_occurrences ?? 0);
             const scannedFiles = Number(scan.files ?? 0);
 
@@ -206,18 +217,7 @@ async function handleAction(type) {
             log.innerHTML += `<div class="text-info"> FASE 1 (CLIENTE): ${notSentLocalExistingCount} no se enviaron porque ya existen en traduccion_local.</div>`;
             log.innerHTML += `<div class="text-danger"> FASE 1 (CLIENTE): ${notSentErrorCount} no se enviaron por errores de validacion.</div>`;
 
-            if (duplicateKeys.length > 0) {
-                const rows = duplicateKeys.map((item) => {
-                    const key = escapeHtml(item.key ?? '');
-                    const occurrences = Number(item.occurrences ?? 0);
-                    const files = Array.isArray(item.files) && item.files.length > 0 ? ` <span class="text-muted">(${escapeHtml(item.files.join(', '))})</span>` : '';
-                    return `<li><code>${key}</code> - repetida ${occurrences} veces${files}</li>`;
-                }).join('');
-
-                log.innerHTML += `<div class="text-warning"> FASE 1 (CLIENTE) - LLAVES REPETIDAS (se envia solo una por key):<ul class="mb-1">${rows}</ul></div>`;
-            }
-
-            if (notSentKeys.length > 0) {
+            if (notSentErrorCount > 0 && notSentKeys.length > 0) {
                 const rows = notSentKeys.map((item) => {
                     const key = escapeHtml(item.key ?? '');
                     const reason = escapeHtml(item.reason ?? 'motivo no definido');
@@ -225,7 +225,7 @@ async function handleAction(type) {
                     return `<li><code>${key}</code> - ${reason}${file}</li>`;
                 }).join('');
 
-                log.innerHTML += `<div class="text-danger"> FASE 1 (CLIENTE) - LLAVES NO ENVIADAS:<ul class="mb-1">${rows}</ul></div>`;
+                log.innerHTML += `<div class="text-danger"> FASE 1 (CLIENTE) - LLAVES NO ENVIADAS POR FILTRO:<ul class="mb-1">${rows}</ul></div>`;
             }
 
             if (!phase2.attempted || sentCount <= 0) {

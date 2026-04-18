@@ -170,7 +170,6 @@ final class SyncController extends AbstractController
                 'deduplicated_occurrences' => (int) ($pushScan['deduplicated_occurrences'] ?? 0),
                 'eligible' => (int) ($pushScan['eligible'] ?? ($localFilter['sent_keys_count'] ?? $count)),
                 'ineligible' => (int) ($pushScan['ineligible'] ?? ($localFilter['not_sent_keys_count'] ?? 0)),
-                'duplicate_keys' => array_values($pushScan['duplicate_keys'] ?? []),
                 'ineligible_keys' => array_values($pushScan['ineligible_keys'] ?? ($localFilter['not_sent_keys'] ?? [])),
             ],
             'phase_1' => [
@@ -180,7 +179,6 @@ final class SyncController extends AbstractController
                 'not_sent_local_existing_count' => (int) ($phase1['not_sent_local_existing_count'] ?? ($localFilter['not_sent_local_existing_count'] ?? 0)),
                 'not_sent_error_count' => (int) ($phase1['not_sent_error_count'] ?? ($localFilter['not_sent_error_count'] ?? 0)),
                 'not_sent_keys' => array_values($phase1['not_sent_keys'] ?? ($localFilter['not_sent_keys'] ?? [])),
-                'duplicate_keys' => array_values($phase1['duplicate_keys'] ?? ($pushScan['duplicate_keys'] ?? [])),
             ],
             'phase_2' => [
                 'attempted' => (bool) ($phase2['attempted'] ?? false),

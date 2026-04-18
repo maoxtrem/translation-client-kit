@@ -25,7 +25,6 @@ final class PushService
         $chunkSize = (int) $prepared['chunk_size'];
         $sendableKeys = array_values($prepared['sendable_keys']);
         $notSentKeys = array_values($prepared['not_sent_keys']);
-        $duplicateKeys = array_values($prepared['duplicate_keys']);
         $sentKeysCount = (int) $prepared['sent_keys_count'];
         $notSentKeysCount = (int) $prepared['not_sent_keys_count'];
         $notSentLocalExistingCount = (int) $prepared['not_sent_local_existing_count'];
@@ -54,7 +53,6 @@ final class PushService
                     'deduplicated_occurrences' => (int) ($scanStats['deduplicated_occurrences'] ?? 0),
                     'eligible' => (int) ($scanStats['eligible'] ?? 0),
                     'ineligible' => (int) ($scanStats['ineligible'] ?? 0),
-                    'duplicate_keys' => $duplicateKeys,
                     'ineligible_keys' => $notSentKeys,
                 ],
                 'phase_1' => [
@@ -67,7 +65,6 @@ final class PushService
                     'not_sent_local_existing_count' => $notSentLocalExistingCount,
                     'not_sent_error_count' => $notSentErrorCount,
                     'not_sent_keys' => $notSentKeys,
-                    'duplicate_keys' => $duplicateKeys,
                 ],
                 'phase_2' => [
                     'attempted' => false,
@@ -180,7 +177,6 @@ final class PushService
                 'deduplicated_occurrences' => (int) ($scanStats['deduplicated_occurrences'] ?? 0),
                 'eligible' => (int) ($scanStats['eligible'] ?? 0),
                 'ineligible' => (int) ($scanStats['ineligible'] ?? 0),
-                'duplicate_keys' => $duplicateKeys,
                 'ineligible_keys' => $notSentKeys,
             ],
             'phase_1' => [
@@ -194,7 +190,6 @@ final class PushService
                 'not_sent_local_existing_count' => $notSentLocalExistingCount,
                 'not_sent_error_count' => $notSentErrorCount,
                 'not_sent_keys' => $notSentKeys,
-                'duplicate_keys' => $duplicateKeys,
             ],
             'phase_2' => [
                 'attempted' => true,
@@ -724,7 +719,6 @@ final class PushService
      *   chunk_size: int,
      *   sendable_keys: array<int, string>,
      *   not_sent_keys: array<int, array{key: string, reason: string, file: string}>,
-     *   duplicate_keys: array<int, array{key: string, occurrences: int, files: array<int, string>}>,
      *   not_sent_local_existing_count: int,
      *   not_sent_error_count: int,
      *   sent_keys_count: int,
@@ -750,12 +744,32 @@ final class PushService
         $entries = array_values($report['entries'] ?? []);
         $rawStats = is_array($report['stats'] ?? null) ? $report['stats'] : [];
 
-        /** @var array<int, array{key: string, reason: string, file: string}> $scannerNotSent */
-        $scannerNotSent = [];
-        /**
-         * @var array<string, array{occurrences: int, files: array<string, bool>}>
-         */
-        $keyMeta = [];
+        /** @var array<string, bool> $candidateKeysIndex */
+        $candidateKeysIndex = [];
+        foreach ($entries as $entry) {
+            [$normalizedKey, $invalidReason] = $this->analyzePushKey((string) ($entry['key'] ?? ''));
+            if ($invalidReason !== null || $normalizedKey === '') {
+                continue;
+            }
+
+            $candidateKeysIndex[$normalizedKey] = true;
+        }
+        $candidateKeys = array_keys($candidateKeysIndex);
+        $existingKeys = $this->traduccionLocalRepository->findExistingKeys($candidateKeys);
+
+        /** @var array<int, string> $sendableKeys */
+        $sendableKeys = [];
+        /** @var array<int, array{key: string, reason: string, file: string}> $notSentKeys */
+        $notSentKeys = [];
+        /** @var array<string, bool> $acceptedKeys */
+        $acceptedKeys = [];
+        /** @var array<string, bool> $duplicatedAcceptedKeys */
+        $duplicatedAcceptedKeys = [];
+        /** @var array<string, bool> $localCountedKeys */
+        $localCountedKeys = [];
+        $localNotSentCount = 0;
+        $scannerNotSentCount = 0;
+        $deduplicatedOccurrences = 0;
 
         foreach ($entries as $entry) {
             $rawKey = (string) ($entry['key'] ?? '');
@@ -766,7 +780,8 @@ final class PushService
 
             [$normalizedKey, $invalidReason, $normalizedRawKey] = $this->analyzePushKey($rawKey);
             if ($invalidReason !== null) {
-                $scannerNotSent[] = [
+                ++$scannerNotSentCount;
+                $notSentKeys[] = [
                     'key' => $normalizedRawKey !== '' ? $normalizedRawKey : '(vacia)',
                     'reason' => $invalidReason,
                     'file' => $file,
@@ -774,72 +789,37 @@ final class PushService
                 continue;
             }
 
-            if (!isset($keyMeta[$normalizedKey])) {
-                $keyMeta[$normalizedKey] = [
-                    'occurrences' => 0,
-                    'files' => [],
-                ];
-            }
-
-            ++$keyMeta[$normalizedKey]['occurrences'];
-            $keyMeta[$normalizedKey]['files'][$file] = true;
-        }
-
-        $candidateKeys = array_keys($keyMeta);
-        $existingKeys = $this->traduccionLocalRepository->findExistingKeys($candidateKeys);
-
-        /** @var array<int, string> $sendableKeys */
-        $sendableKeys = [];
-        /** @var array<int, array{key: string, reason: string, file: string}> $localNotSent */
-        $localNotSent = [];
-        /** @var array<int, array{key: string, occurrences: int, files: array<int, string>}> $duplicateKeys */
-        $duplicateKeys = [];
-
-        foreach ($keyMeta as $key => $meta) {
-            $files = array_keys($meta['files']);
-            sort($files);
-            $filesLabel = $files === [] ? 'desconocido' : implode(', ', $files);
-
-            if (($meta['occurrences'] ?? 0) > 1) {
-                $duplicateKeys[] = [
-                    'key' => $key,
-                    'occurrences' => (int) $meta['occurrences'],
-                    'files' => $files,
-                ];
-            }
-
-            if (isset($existingKeys[$key])) {
-                $localNotSent[] = [
-                    'key' => $key,
-                    'reason' => 'ya existe en traduccion_local',
-                    'file' => $filesLabel,
-                ];
+            if (isset($acceptedKeys[$normalizedKey])) {
+                ++$deduplicatedOccurrences;
+                $duplicatedAcceptedKeys[$normalizedKey] = true;
                 continue;
             }
 
-            $sendableKeys[] = $key;
+            if (isset($existingKeys[$normalizedKey])) {
+                if (!isset($localCountedKeys[$normalizedKey])) {
+                    $localCountedKeys[$normalizedKey] = true;
+                    ++$localNotSentCount;
+                }
+                continue;
+            }
+
+            $acceptedKeys[$normalizedKey] = true;
+            $sendableKeys[] = $normalizedKey;
         }
 
-        $scannerNotSent = $this->mergeNotSentKeys($scannerNotSent, []);
-        $localNotSent = $this->mergeNotSentKeys($localNotSent, []);
-        $notSentKeys = $this->mergeNotSentKeys($scannerNotSent, $localNotSent);
-        $notSentErrorCount = count($scannerNotSent);
-        $localNotSentCount = count($localNotSent);
-        $notSentTotalCount = count($notSentKeys);
+        $notSentTotalCount = $scannerNotSentCount + $localNotSentCount;
 
         $filesScanned = (int) ($rawStats['files'] ?? 0);
         $foundOccurrences = (int) ($rawStats['found'] ?? count($entries));
-        $uniqueKeysCount = count($keyMeta);
-        $deduplicatedOccurrences = max(0, $foundOccurrences - $uniqueKeysCount);
+        $uniqueKeysCount = count($candidateKeysIndex);
 
         return [
             'service' => $serviceName,
             'chunk_size' => $chunkSize,
             'sendable_keys' => $sendableKeys,
             'not_sent_keys' => $notSentKeys,
-            'duplicate_keys' => $duplicateKeys,
             'not_sent_local_existing_count' => $localNotSentCount,
-            'not_sent_error_count' => $notSentErrorCount,
+            'not_sent_error_count' => $scannerNotSentCount,
             'sent_keys_count' => count($sendableKeys),
             'not_sent_keys_count' => $notSentTotalCount,
             'scan_stats' => [
@@ -847,7 +827,7 @@ final class PushService
                 'found' => $foundOccurrences,
                 'unique' => $uniqueKeysCount,
                 'deduplicated_occurrences' => $deduplicatedOccurrences,
-                'duplicated_keys_count' => count($duplicateKeys),
+                'duplicated_keys_count' => count($duplicatedAcceptedKeys),
                 'eligible' => count($sendableKeys),
                 'ineligible' => $notSentTotalCount,
             ],
