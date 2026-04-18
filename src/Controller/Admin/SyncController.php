@@ -26,10 +26,18 @@ final class SyncController extends AbstractController
     {
         try {
             $result = $downloadService->download();
+            $count = (int) ($result['count'] ?? 0);
+            $duplicatesIgnored = (int) ($result['duplicates_ignored'] ?? 0);
+            $message = sprintf('Descargadas %d etiquetas.', $count);
+            if ($duplicatesIgnored > 0) {
+                $message .= sprintf(' Se ignoraron %d duplicadas en el payload remoto.', $duplicatesIgnored);
+            }
 
             return new JsonResponse([
                 'success' => true,
-                'message' => sprintf('Descargadas %d etiquetas.', (int) ($result['count'] ?? 0)),
+                'message' => $message,
+                'count' => $count,
+                'duplicates_ignored' => $duplicatesIgnored,
                 'keys' => array_values($result['keys'] ?? []),
                 'dump_files' => array_values($result['dump_files'] ?? []),
                 'locales' => array_values($result['locales'] ?? []),

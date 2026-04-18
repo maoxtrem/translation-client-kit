@@ -23,6 +23,7 @@ final class DownloadService
     /**
      * @return array{
      *   count: int,
+     *   duplicates_ignored: int,
      *   message: string,
      *   source: string,
      *   keys: array<int, string>,
@@ -48,6 +49,7 @@ final class DownloadService
 
         $connection = $this->entityManager->getConnection();
         $connection->beginTransaction();
+        $duplicatedRows = 0;
 
         try {
             $this->entityManager->createQueryBuilder()
@@ -55,11 +57,13 @@ final class DownloadService
                 ->getQuery()
                 ->execute();
 
-            $inserted = 0;
-            /** @var array<string, bool> $keys */
-            $keys = [];
-            /** @var array<string, bool> $locales */
-            $locales = [];
+            /**
+             * Deduplicamos por (key_name, locale) para evitar violar la restriccion
+             * unica cuando el Cerebro envia filas repetidas en el mismo paquete.
+             *
+             * @var array<string, array{key_name: string, locale: string, content: string}>
+             */
+            $rowsByKeyLocale = [];
             foreach ($payload as $index => $row) {
                 if (!is_array($row)) {
                     throw new \RuntimeException(sprintf('Fila invalida en payload (indice %d).', $index));
@@ -73,15 +77,36 @@ final class DownloadService
                     throw new \RuntimeException(sprintf('Fila incompleta en payload (indice %d): key_name/locale requeridos.', $index));
                 }
 
+                $normalizedKeyName = strtolower($keyName);
+                $normalizedLocale = strtolower($locale);
+                $compositeId = $normalizedKeyName . '|' . $normalizedLocale;
+                if (isset($rowsByKeyLocale[$compositeId])) {
+                    ++$duplicatedRows;
+                }
+
+                // Si llega repetida, conservamos la ultima version del contenido.
+                $rowsByKeyLocale[$compositeId] = [
+                    'key_name' => $normalizedKeyName,
+                    'locale' => $normalizedLocale,
+                    'content' => $content,
+                ];
+            }
+
+            $inserted = 0;
+            /** @var array<string, bool> $keys */
+            $keys = [];
+            /** @var array<string, bool> $locales */
+            $locales = [];
+            foreach ($rowsByKeyLocale as $preparedRow) {
                 $entity = (new TraduccionLocal())
-                    ->setKeyName($keyName)
-                    ->setLocale($locale)
-                    ->setContent($content);
+                    ->setKeyName($preparedRow['key_name'])
+                    ->setLocale($preparedRow['locale'])
+                    ->setContent($preparedRow['content']);
 
                 $this->entityManager->persist($entity);
                 ++$inserted;
-                $keys[strtolower($keyName)] = true;
-                $locales[strtolower($locale)] = true;
+                $keys[$preparedRow['key_name']] = true;
+                $locales[$preparedRow['locale']] = true;
             }
 
             $this->entityManager->flush();
@@ -104,6 +129,7 @@ final class DownloadService
 
         return [
             'count' => $inserted,
+            'duplicates_ignored' => $duplicatedRows,
             'message' => 'Guardado en la base de datos: ' . $dbName,
             'source' => $url,
             'keys' => $keyList,
