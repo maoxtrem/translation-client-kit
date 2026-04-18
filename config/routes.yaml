@@ -9,3 +9,7 @@ kit_docs_routes:
 kit_api_locales:
   resource: '../src/Controller/Api/BundleLocaleController.php'
   type: attribute
+
+kit_switch_locale:
+  resource: '../src/Controller/SwitchLocaleController.php'
+  type: attribute

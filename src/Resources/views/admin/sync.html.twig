@@ -7,7 +7,13 @@
     <div class="card shadow border-0">
         <div class="card-header bg-dark text-white d-flex justify-content-between">
             <h5 class="mb-0">Client Kit: {{ app_name|default('Proyecto') }}</h5>
-            <span id="status-label" class="badge bg-secondary">Listo</span>
+            <div class="d-flex align-items-center gap-2">
+                <label for="locale-select" class="small mb-0 text-white-50">Idioma</label>
+                <select id="locale-select" class="form-select form-select-sm" style="width: 120px;" disabled>
+                    <option value="">Cargando...</option>
+                </select>
+                <span id="status-label" class="badge bg-secondary">Listo</span>
+            </div>
         </div>
         <div class="card-body">
             <div class="row text-center">
@@ -58,6 +64,67 @@ function clearConsoleLog() {
     }
 
     log.innerHTML = '&gt; Esperando accion...';
+}
+
+function buildLocaleOption(locale) {
+    const option = document.createElement('option');
+    option.value = locale;
+    option.textContent = locale.toUpperCase();
+    return option;
+}
+
+async function initLocaleSwitcher() {
+    const select = document.getElementById('locale-select');
+    if (!select) {
+        return;
+    }
+
+    const currentLocale = '{{ app.request.locale|default("es")|lower }}';
+
+    try {
+        const payload = await fetchJsonOrThrow('/api/v2/client-kit/locales', { method: 'GET' });
+        const locales = Array.isArray(payload.data)
+            ? payload.data
+                .map((locale) => String(locale).trim().toLowerCase())
+                .filter((locale) => locale !== '')
+            : [];
+
+        const uniqueLocales = [...new Set(locales)];
+        if (currentLocale !== '' && !uniqueLocales.includes(currentLocale)) {
+            uniqueLocales.unshift(currentLocale);
+        }
+
+        select.innerHTML = '';
+        if (uniqueLocales.length === 0) {
+            select.appendChild(buildLocaleOption(currentLocale || 'es'));
+        } else {
+            uniqueLocales.forEach((locale) => select.appendChild(buildLocaleOption(locale)));
+        }
+
+        select.value = currentLocale || (uniqueLocales[0] ?? 'es');
+        select.disabled = false;
+    } catch (error) {
+        select.innerHTML = '';
+        const fallback = buildLocaleOption(currentLocale || 'es');
+        fallback.textContent = (currentLocale || 'es').toUpperCase() + ' (fallback)';
+        select.appendChild(fallback);
+        select.value = currentLocale || 'es';
+        select.disabled = false;
+    }
+}
+
+function applySelectedLocale() {
+    const select = document.getElementById('locale-select');
+    if (!select) {
+        return;
+    }
+
+    const locale = String(select.value || '').trim().toLowerCase();
+    if (locale === '') {
+        return;
+    }
+
+    window.location.href = `/switch-locale/${encodeURIComponent(locale)}`;
 }
 
 async function fetchJsonOrThrow(url, options = {}) {
@@ -289,5 +356,13 @@ async function handleAction(type) {
         log.scrollTop = log.scrollHeight;
     }
 }
+
+document.addEventListener('DOMContentLoaded', () => {
+    initLocaleSwitcher();
+    const select = document.getElementById('locale-select');
+    if (select) {
+        select.addEventListener('change', applySelectedLocale);
+    }
+});
 </script>
 {% endblock %}

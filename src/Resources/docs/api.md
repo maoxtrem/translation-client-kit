@@ -1,110 +1,199 @@
-# TranslationClientKit API (Headless)
-## Endpoints
-- **GET** `/api/v2/client-kit/locales`: Lista de idiomas activos.
-- **GET** `/switch-locale/{iso}`: Cambia el idioma de sesión.
-- **POST** `/api/v2/client-kit/sync`: Envía llaves al Cerebro.
-- **POST** `/api/v2/client-kit/pull`: Baja traducciones.
+# TranslationClientKit - Guia de Implementacion
 
-Este es el documento técnico con todas las configuraciones externas que deben realizarse en los proyectos (como Restabar o Marketing) para que el **TranslationClientKit** funcione correctamente.
+Esta guia explica lo necesario para instalar y usar el bundle en un proyecto host Symfony.
 
-Tu archivo Markdown (`doc.md`) ha sido generado con los detalles de la "justicia técnica" para tu ecosistema en Piedecuesta.
+## 1) Registro del Bundle
 
-```python
-from IPython.display import display
-
-# Contenido del documento
-markdown_content = """# Guía de Implementación Externa: TranslationClientKit
-
-Este documento detalla las configuraciones necesarias en el proyecto "Host" (ej. Restabar) para integrar y hacer funcionar el bundle `maoxtrem/translation-client-kit`.
-
-## 1. Instalación y Repositorio
-En el `composer.json` del proyecto principal, añade el repositorio (VCS o Path) y requiere el paquete:
-
-```json
-{
-    "repositories": [
-        {
-            "type": "vcs",
-            "url": "[https://github.com/maoxtrem/translation-client-kit.git](https://github.com/maoxtrem/translation-client-kit.git)"
-        }
-    ],
-    "require": {
-        "maoxtrem/translation-client-kit": "dev-main@dev"
-    }
-}
-```
-
-## 2. Registro del Bundle
-Añade la clase del bundle en `config/bundles.php`:
+Archivo: `config/bundles.php`
 
 ```php
+<?php
+
 return [
-    // ... otros bundles
-    Maoxtrem\\TranslationClientKit\\TranslationClientBundle::class => ['all' => true],
+    // ...
+    Maoxtrem\TranslationClientKit\TranslationClientBundle::class => ['all' => true],
 ];
 ```
 
-## 3. Importación de Rutas
-Para habilitar el panel de administración (`/admin/translations/sync`) y los endpoints de la API, configura `config/routes.yaml`:
+## 2) Importar Rutas del Bundle
+
+Archivo: `config/routes.yaml`
 
 ```yaml
 translation_client_kit:
-    resource: '@TranslationClientBundle/config/routes.yaml'
+  resource: '@TranslationClientBundle/config/routes.yaml'
 ```
 
-## 4. Configuración de Caché (Framework)
-El bundle requiere un pool de caché específico para las traducciones. Define `cache.translations` en `config/packages/framework.yaml`:
+Con esto quedan disponibles las rutas del panel, locales y switch de idioma.
+
+## 3) Configuracion YAML Requerida
+
+### 3.1 Cache pool para traducciones
+
+Archivo: `config/packages/framework.yaml`
 
 ```yaml
 framework:
-    cache:
-        pools:
-            cache.translations:
-                adapter: cache.adapter.filesystem
+  cache:
+    pools:
+      cache.translations:
+        adapter: cache.adapter.filesystem
 ```
 
-## 5. Registro de Vistas (Twig)
-Para que Symfony encuentre las plantillas del bundle bajo el namespace `@TranslationClient`, añade la ruta en `config/packages/twig.yaml`:
+### 3.2 Twig path del bundle (si renderizas vistas del bundle)
+
+Archivo: `config/packages/twig.yaml`
 
 ```yaml
 twig:
+  paths:
+    '%kernel.project_dir%/vendor/maoxtrem/translation-client-kit/src/Resources/views': TranslationClient
+```
+
+Si instalas el bundle por path local, ajusta la ruta.
+
+### 3.3 Translator (recomendado)
+
+El bundle crea archivos marcador en `translations/db/*.db` para disparar el loader `db`.
+En la mayoria de proyectos Flex funciona con el path por defecto `translations/`, pero se recomienda explicitar:
+
+Archivo: `config/packages/translation.yaml` o `framework.yaml`
+
+```yaml
+framework:
+  translator:
+    default_path: '%kernel.project_dir%/translations'
     paths:
-        '%kernel.project_dir%/vendor/maoxtrem/translation-client-kit/src/Resources/views': TranslationClient
-```
-*Nota: Ajusta la ruta si usas una instalación por "path" local.*
-
-## 6. Variables de Entorno (.env)
-Configura la conexión con el servidor central ("Cerebro"):
-
-```bash
-# Nombre identificador de este proyecto en el Cerebro
-APP_NAME=restabar_dev
-
-# URL del servidor de traducciones (Cerebro)
-TRADUCCIONES_URL=[https://translations.ospsources.com](https://translations.ospsources.com)
+      - '%kernel.project_dir%/translations/db'
 ```
 
-## 7. Base de Datos
-Asegúrate de ejecutar las migraciones o actualizar el esquema para crear la tabla `traduccion_local`:
+### 3.4 Doctrine mapping (si tu proyecto no autodetecta la entidad del bundle)
+
+Archivo: `config/packages/doctrine.yaml`
+
+```yaml
+doctrine:
+  orm:
+    mappings:
+      TranslationClientKit:
+        is_bundle: false
+        type: attribute
+        dir: '%kernel.project_dir%/vendor/maoxtrem/translation-client-kit/src/Entity'
+        prefix: 'Maoxtrem\TranslationClientKit\Entity'
+        alias: TranslationClientKit
+```
+
+## 4) Variables de Entorno
+
+Archivo: `.env` o `.env.local`
+
+```dotenv
+# Identificador del proyecto en el servidor de traducciones
+APP_NAME=mi_proyecto
+
+# URL base del servidor de traducciones (Cerebro)
+TRADUCCIONES_URL=https://translations.midominio.com
+
+# Opcional: tamano de paquete para push/push legacy
+TRADUCCIONES_SYNC_CHUNK_SIZE=200
+```
+
+## 5) Base de Datos
+
+La entidad `traduccion_local` debe existir en el host.
+
+Opciones:
+
+1. Generar migracion y ejecutarla.
+2. O actualizar esquema directo en desarrollo:
 
 ```bash
 php bin/console doctrine:schema:update --force
 ```
 
-## 8. Verificación Final
-Una vez completado, limpia la caché y verifica las rutas:
+## 6) Endpoints Disponibles
 
-1. `php bin/console cache:clear`
-2. `php bin/console debug:router | grep kit_sync`
-3. Accede a: `https://tu-dominio.com/admin/translations/sync`
-"""
+### Documentacion
+- `GET /api/v2/client-kit/docs`
 
-with open('implementacion_externa.md', 'w') as f:
-    f.write(markdown_content)
+### Admin Sync
+- `GET /admin/translations/sync`
+- `POST /admin/translations/pull`
+- `POST /admin/translations/push`
+- `POST /admin/translations/migrate-legacy`
+- `POST /admin/translations/migrate-legacy/scan`
+- `POST /admin/translations/migrate-legacy/send`
+- `POST /admin/translations/migrate-legacy/send-chunk`
+
+### Locales
+- `GET /api/v2/client-kit/locales`
+- `GET /switch-locale/{_locale}`
+
+## 7) Uso del JS con Boton (Ejemplo Facil)
+
+Este ejemplo consume las rutas del bundle para cambio de idioma desde tu propia vista del host.
+
+### HTML
+
+```html
+<select id="kit-locale-select" disabled>
+  <option value="">Cargando...</option>
+</select>
+<button id="kit-locale-apply" type="button" disabled>Cambiar idioma</button>
 ```
 
-Tu archivo Markdown (MD) está listo
-[file-tag: implementacion_externa_md]
+### JavaScript
 
-Este documento resume todos los "puentes" que construimos: desde el registro del bundle hasta la configuración crítica del pool de caché y el namespace de Twig. Con esto, cualquier proyecto nuevo que herede estas configuraciones estará listo para sincronizarse con el Cerebro de inmediato.
-test
+```html
+<script>
+async function loadKitLocales() {
+  const select = document.getElementById('kit-locale-select');
+  const button = document.getElementById('kit-locale-apply');
+
+  const response = await fetch('/api/v2/client-kit/locales');
+  const payload = await response.json();
+  const locales = Array.isArray(payload.data) ? payload.data : [];
+
+  select.innerHTML = '';
+  locales.forEach((locale) => {
+    const option = document.createElement('option');
+    option.value = String(locale).toLowerCase();
+    option.textContent = String(locale).toUpperCase();
+    select.appendChild(option);
+  });
+
+  select.disabled = false;
+  button.disabled = false;
+}
+
+function applyKitLocale() {
+  const select = document.getElementById('kit-locale-select');
+  const locale = String(select.value || '').trim().toLowerCase();
+  if (locale === '') {
+    return;
+  }
+  window.location.href = '/switch-locale/' + encodeURIComponent(locale);
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  loadKitLocales();
+  document.getElementById('kit-locale-apply').addEventListener('click', applyKitLocale);
+});
+</script>
+```
+
+Opcional: en vez de boton, puedes aplicar en `change` del `select`.
+
+## 8) Verificacion Rapida
+
+```bash
+php bin/console cache:clear
+php bin/console debug:router | grep -E "kit_|client-kit"
+```
+
+Comprueba:
+
+1. Abrir `GET /admin/translations/sync`.
+2. Ejecutar `pull` y validar que escribe en `traduccion_local`.
+3. Probar selector/boton de idioma y confirmar cambio de locale en sesion.
+
