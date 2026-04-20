@@ -28,6 +28,10 @@ final class SyncController extends AbstractController
             $result = $downloadService->download();
             $count = (int) ($result['count'] ?? 0);
             $duplicatesIgnored = (int) ($result['duplicates_ignored'] ?? 0);
+            $allKeys = array_values($result['keys'] ?? []);
+            $allDumpFiles = array_values($result['dump_files'] ?? []);
+            $keysPreviewLimit = 200;
+            $dumpFilesPreviewLimit = 50;
             $message = sprintf('Descargadas %d etiquetas.', $count);
             if ($duplicatesIgnored > 0) {
                 $message .= sprintf(' Se ignoraron %d duplicadas en el payload remoto.', $duplicatesIgnored);
@@ -38,8 +42,13 @@ final class SyncController extends AbstractController
                 'message' => $message,
                 'count' => $count,
                 'duplicates_ignored' => $duplicatesIgnored,
-                'keys' => array_values($result['keys'] ?? []),
-                'dump_files' => array_values($result['dump_files'] ?? []),
+                // Evita respuestas JSON excesivamente grandes en payloads masivos.
+                'keys_count' => count($allKeys),
+                'keys' => array_slice($allKeys, 0, $keysPreviewLimit),
+                'keys_truncated' => count($allKeys) > $keysPreviewLimit,
+                'dump_files_count' => count($allDumpFiles),
+                'dump_files' => array_slice($allDumpFiles, 0, $dumpFilesPreviewLimit),
+                'dump_files_truncated' => count($allDumpFiles) > $dumpFilesPreviewLimit,
                 'locales' => array_values($result['locales'] ?? []),
             ]);
         } catch (\Throwable $exception) {

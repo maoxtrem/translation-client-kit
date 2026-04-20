@@ -11,7 +11,7 @@ use Symfony\Contracts\HttpClient\HttpClientInterface;
 
 final class DownloadService
 {
-    private const DB_MARKER_DOMAINS = ['messages', 'validators'];
+    private const DB_MARKER_DOMAINS = ['messages'];
 
     public function __construct(
         private readonly HttpClientInterface $httpClient,
@@ -150,6 +150,8 @@ final class DownloadService
             throw new \RuntimeException(sprintf('No se pudo crear el directorio de dump: %s', $targetDir));
         }
 
+        $this->cleanupDeprecatedDbMarkerFiles($targetDir);
+
         $written = [];
         foreach ($locales as $locale) {
             $normalizedLocale = strtolower(trim($locale));
@@ -171,5 +173,25 @@ final class DownloadService
         sort($written);
 
         return $written;
+    }
+
+    private function cleanupDeprecatedDbMarkerFiles(string $targetDir): void
+    {
+        foreach (['validator.*.db', 'validators.*.db'] as $pattern) {
+            $matches = glob($targetDir . '/' . $pattern);
+            if (!is_array($matches)) {
+                continue;
+            }
+
+            foreach ($matches as $filePath) {
+                if (!is_file($filePath)) {
+                    continue;
+                }
+
+                if (!unlink($filePath)) {
+                    throw new \RuntimeException(sprintf('No se pudo eliminar el archivo obsoleto: %s', $filePath));
+                }
+            }
+        }
     }
 }

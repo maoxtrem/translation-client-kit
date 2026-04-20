@@ -337,10 +337,14 @@ async function handleAction(type) {
         if (data.success) {
             log.innerHTML += `<div class="text-success"> OK: ${data.message}</div>`;
             if (Array.isArray(data.keys) && data.keys.length > 0) {
-                log.innerHTML += `<div class="text-info"> KEYS DESCARGADAS (${data.keys.length}): ${data.keys.join(', ')}</div>`;
+                const keysCount = Number(data.keys_count ?? data.keys.length);
+                const previewSuffix = data.keys_truncated ? ' (preview)' : '';
+                log.innerHTML += `<div class="text-info"> KEYS DESCARGADAS (${keysCount})${previewSuffix}: ${data.keys.join(', ')}</div>`;
             }
             if (Array.isArray(data.dump_files) && data.dump_files.length > 0) {
-                log.innerHTML += `<div class="text-primary"> ARCHIVOS DB: ${data.dump_files.join(', ')}</div>`;
+                const dumpFilesCount = Number(data.dump_files_count ?? data.dump_files.length);
+                const previewSuffix = data.dump_files_truncated ? ' (preview)' : '';
+                log.innerHTML += `<div class="text-primary"> ARCHIVOS DB (${dumpFilesCount})${previewSuffix}: ${data.dump_files.join(', ')}</div>`;
             }
             label.className = 'badge bg-success';
             label.innerText = 'Exito';
